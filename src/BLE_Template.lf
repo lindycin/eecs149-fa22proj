@@ -17,7 +17,7 @@ preamble {=
             // MAC address: c0:98:e5:49:xx:xx
             // where the last two octets are given by the device_id below.
             .platform_id       = 0x49,   // The 4th octet in device BLE address.
-            .device_id         = 0xAABB, // TODO: replace with your lab bench number
+            .device_id         = 0x0005, // TODO: replace with your lab bench number
             .adv_name          = "ROMI", // used in advertisements if there is room
             .adv_interval      = MSEC_TO_UNITS(100, UNIT_0_625_MS),
             .min_conn_interval = MSEC_TO_UNITS(100, UNIT_1_25_MS),
@@ -34,6 +34,7 @@ preamble {=
     // Characteristic reflecting key presses.
     // The characteristic is identified within the service by a 16-bit unique ID.
     static simple_ble_char_t key_state_characteristic = {.uuid16 = 0x7182};
+    static uint8_t romi_data[4];
 =}
 
 /**
@@ -59,6 +60,19 @@ reactor ArrowKeys(period:time(100 ms)) {
         // See https://github.com/lab11/nrf52x-base/blob/master/lib/simple_ble/README.md
 
         // Your code goes here.
+        simple_ble_app_t* ble_app;
+
+        ble_app = simple_ble_init(&ble_config);
+
+        simple_ble_add_service(&romi_service);
+
+        simple_ble_add_characteristic(1, 1, 0, 0, 
+                                    sizeof(romi_data), 
+                                    (uint8_t*)&(romi_data),
+                                    &romi_service, &key_state_characteristic);
+
+        simple_ble_adv_only_name();
+
     =}
 
     reaction(t) -> up, down, left, right {=
@@ -67,6 +81,31 @@ reactor ArrowKeys(period:time(100 ms)) {
         // indicates that it is not.
 
         // Your code goes here.
+        printf("U:%d, D:%d, L:%d, R:%d\n", romi_data[0], romi_data[1], romi_data[2], romi_data[3]);
+
+        printf("%b %b %b %b\n", romi_data[3], romi_data[2], romi_data[1], romi_data[0]);
+
+
+        if(romi_data[0]) {
+            lf_set(up, 1);
+        } else {
+            lf_set(up, 0);
+        }
+        if(romi_data[1]) {
+            lf_set(down, 1);
+        } else {
+            lf_set(down, 0);
+        }
+        if(romi_data[2]) {
+            lf_set(left, 1);
+        } else {
+            lf_set(left, 0);
+        }
+        if(romi_data[3]) {
+            lf_set(right, 1);
+        } else {
+            lf_set(right, 0);
+        }
     =}
 }
 

@@ -8,17 +8,55 @@ reactor EncoderToDistance(
 ) {
     input encoder:uint16_t;   // Ticks.
     output distance:float;    // Meters.
+    output distanceStr:string;
     
     reset state previous_encoder:uint16_t(0);
     reset state previous_distance:float(0);
     reset state first:bool(true);   // Treat first encoder input specially.
     
-    reaction (encoder) -> distance {=
+    reaction (encoder) -> distance, distanceStr {=
         if (self->first) {
             // First encoder input, so distance should be zero.
             self->previous_encoder = encoder->value;
             self->first = false;
         }
         // Your code goes here.
+
+        float distance_value;
+        static char x[17];
+
+        if ((int)encoder->value > (int)self->previous_encoder + (32767)) // underflow
+        {
+            distance_value = self->previous_distance - (65536 - (encoder->value - self->previous_encoder)) * self->ticks_to_meters;
+            self->previous_distance = distance_value;
+            lf_set(distance, distance_value);
+            snprintf(x, 16 + 1, "dist:%.2f", distance_value);
+            lf_set(distanceStr, x);
+        }
+        else if ((int)encoder->value + (32767) < (int)self->previous_encoder) //overflow
+        {
+            distance_value = self->previous_distance + (65536 - (self->previous_encoder - encoder->value)) * self->ticks_to_meters;
+            self->previous_distance = distance_value;
+            lf_set(distance, distance_value);
+            snprintf(x, 16 + 1, "dist:%.2f", distance_value);
+            lf_set(distanceStr, x);
+        }
+        else if (encoder->value > self->previous_encoder)
+        {
+            distance_value = self->previous_distance + (encoder->value - self->previous_encoder) * self->ticks_to_meters;
+            self->previous_distance = distance_value;
+            lf_set(distance, distance_value);
+            snprintf(x, 16 + 1, "dist:%.2f", distance_value);
+            lf_set(distanceStr, x);
+        } else{
+            distance_value = self->previous_distance - ((self->previous_encoder - encoder->value)) * self->ticks_to_meters;
+            self->previous_distance = distance_value;
+            lf_set(distance, distance_value);
+            snprintf(x, 16 + 1, "dist:%.2f", distance_value);
+            lf_set(distanceStr, x);
+        }
+        self->previous_encoder = encoder->value;
+
+        // self->previous_encoder = encoder->value;
     =}
-}
+    }
