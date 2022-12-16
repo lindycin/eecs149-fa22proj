@@ -40,6 +40,14 @@ uint8_t beaconUuid[16] =
 // UUID, Major, Minor, RSSI @ 1M
 BLEBeacon beacon(beaconUuid, 0x0102, 0x0304, -54);
 
+#define SCAN_INTERVAL                   0x00A0                                      /**< Determines scan interval in units of 0.625 millisecond. */
+#define SCAN_WINDOW                     0x0050                                      /**< Determines scan window in units of 0.625 millisecond. */
+
+#define SCAN_DURATION                   0x0000                                      /**< Duration of the scanning in units of 10 milliseconds. If set to 0x0000, scanning will continue until it is explicitly disabled. */
+
+
+
+
 void setup(void) {
   Serial.begin(38400);
 
@@ -57,7 +65,24 @@ void setup(void) {
   beacon.setManufacturer(MANUFACTURER_ID);
 
   // Setup the advertising packet
-  startAdv();
+  // startAdv();
+
+  // start scanning
+  ble_gap_scan_params_t* scanparam;
+  // scanparam->active = 1;
+  static ble_gap_scan_params_t const m_scan_params =
+{
+    .extended      = 1,
+    .active        = 1,
+    .interval      = SCAN_INTERVAL,
+    .window        = SCAN_WINDOW,
+    .timeout       = SCAN_DURATION,
+    .scan_phys     = BLE_GAP_PHY_1MBPS,
+    .filter_policy = BLE_GAP_SCAN_FP_ACCEPT_ALL,
+};
+  const ble_data_t* buffer[16];
+  Serial.println(sd_ble_gap_scan_start(scanparam, *buffer));
+  Serial.println((int)buffer);
 
   Serial.println("Broadcasting beacon, open your beacon app to test");
 
