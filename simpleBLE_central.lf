@@ -1,0 +1,224 @@
+target C {
+    threading: false,
+    build: "../scripts/build_nrf_unix.sh"   
+};
+
+import Display from "lib/Display.lf"
+
+preamble {=
+    #include "simple_ble.h"
+    #include <math.h>
+    int count_yellow = 0;
+    int tot_dist_yellow = 0;
+    int count_purple = 0;
+    int tot_dist_purple = 0;
+
+    // Data structures needed for BLE.
+    // See https://github.com/lab11/nrf52x-base/blob/master/lib/simple_ble/README.md
+
+    // BLE Configuration specifies the MAC address and
+    // intervals for advertising and connections.
+    static simple_ble_config_t ble_config = {
+            // MAC address: c0:98:e5:49:xx:xx
+            // where the last two octets are given by the device_id below.
+            .platform_id       = 0x49,   // The 4th octet in device BLE address.
+            .device_id         = 0x0021, // TODO: replace with your lab bench number
+            .adv_name          = "ROMI", // used in advertisements if there is room
+            .adv_interval      = MSEC_TO_UNITS(100, UNIT_0_625_MS),
+            .min_conn_interval = MSEC_TO_UNITS(100, UNIT_1_25_MS),
+            .max_conn_interval = MSEC_TO_UNITS(200, UNIT_1_25_MS),
+    };
+
+    // Specify a unique ID for the ROMI service.
+    // UUID: 85e43f4d-b4a7-4c6f-ba86-2db3c40a2c83
+    static simple_ble_service_t romi_service = {{
+        .uuid128 = {0x83,0x2c,0x0a,0xc4,0xb3,0x2d,0x86,0xba,
+                    0x6f,0x4c,0xa7,0xb4,0x4d,0x3f,0xe4,0x85}
+    }};
+
+    void ble_evt_adv_report(ble_evt_t const* p_ble_evt) {
+
+        ble_gap_evt_adv_report_t const* adv_report = &(p_ble_evt->evt.gap_evt.params.adv_report);
+        // TODO: extract the fields we care about (Peer address and data)
+
+        // TODO: filter on Peer address
+
+        uint8_t* buf[2]; //[intended destination (0 = purple or 1 yellow), volume control (0 {low} - 2 {high})]
+
+        if (adv_report->peer_addr.addr[5] == 0xc4 &&
+            adv_report->peer_addr.addr[4] == 0x83 &&
+            adv_report->peer_addr.addr[3] == 0xa0 &&
+            adv_report->peer_addr.addr[2] == 0x4e &&
+            adv_report->peer_addr.addr[1] == 0xa3 &&
+            adv_report->peer_addr.addr[0] == 0xd9
+            ) { // replace with condition on peer address
+        // if address matches purple's, loop until we find field 0xFF
+            printf("rssi: %d ,",adv_report->rssi);
+            printf("addr: %02x:%02x:%02x:%02x:%02x:%02x ,",
+            adv_report->peer_addr.addr[5],
+            adv_report->peer_addr.addr[4],
+            adv_report->peer_addr.addr[3],
+            adv_report->peer_addr.addr[2],
+            adv_report->peer_addr.addr[1],
+            adv_report->peer_addr.addr[0]);
+            float power = (-67.0 - adv_report->rssi)/(10.0*3.0);
+            float dist = powf(10,power);
+            tot_dist_purple += dist;
+            if (count_purple == 9) { // averaging 10 distances
+                count_purple = 0;
+                printf("dist: %f, ", dist/10);
+                // advertise volume levels for speakers
+            } else {
+                count_purple += 1;
+            }
+        }
+        if (adv_report->peer_addr.addr[5] == 0xfb &&
+            adv_report->peer_addr.addr[4] == 0x47 &&
+            adv_report->peer_addr.addr[3] == 0x83 &&
+            adv_report->peer_addr.addr[2] == 0xf9 &&
+            adv_report->peer_addr.addr[1] == 0x47 &&
+            adv_report->peer_addr.addr[0] == 0x0c
+            ) { // yellow's mp = ~ -67 N=3?
+            printf("rssi: %d ,",adv_report->rssi);
+            printf("addr: %02x:%02x:%02x:%02x:%02x:%02x ,",
+            adv_report->peer_addr.addr[5],
+            adv_report->peer_addr.addr[4],
+            adv_report->peer_addr.addr[3],
+            adv_report->peer_addr.addr[2],
+            adv_report->peer_addr.addr[1],
+            adv_report->peer_addr.addr[0]);
+            float power = (-67.0 - adv_report->rssi)/(10.0*3.0);
+            float dist = powf(10,power);
+            tot_dist_yellow += dist;
+            if (count_yellow == 9) { // averaging 10 distances
+                count_yellow = 0;
+                printf("dist: %f, ", dist/10);
+                buf[0] = 1;
+                buf[1] = 0;
+                // advertise volume levels for speakers
+                // if (close distance) { // just need to find some distance threshold like dist < some #
+                //     advertise low volume
+                //     buf[1] = 0;
+                // } else { // can also add a med dist case
+                //     advertise high volume
+                //     buf[1] = 2;
+                // }
+                simple_ble_adv_manuf_data(buf, 2);
+            } else {
+                count_yellow += 1;
+            }
+            printf("\n");
+        }
+}
+
+
+    // Characteristic reflecting key presses.
+    // The characteristic is identified within the service by a 16-bit unique ID.
+    static simple_ble_char_t key_state_characteristic = {.uuid16 = 0x7182};
+
+
+    static uint8_t char_buffer[4];
+=}
+
+/**
+ * This reactor, designed to run on an nRF52 board, advertises
+ * itself during startup and adds a Bluetooth service with a
+ * characteristic that receives arrow key information from a
+ * computer that pairs with the nRF52. It then periodically
+ * outputs four booleans indicating whether each particular
+ * arrow key is currently pressed.  The period is given as
+ * a parameter.
+ */
+reactor ArrowKeys(period:time(100 ms)) {
+
+    output up:bool;
+    output down:bool;
+    output left:bool;
+    output right:bool;
+
+    timer t(0, period);
+
+    reaction(startup) {=
+        // Set up BLE.
+        simple_ble_app_t* simple_ble_app;
+        simple_ble_app = simple_ble_init(&ble_config);
+        // simple_ble_add_service(&romi_service);
+        // simple_ble_add_characteristic(1,1,0,0,sizeof(char_buffer),(uint8_t*)&char_buffer,&romi_service,&key_state_characteristic);
+        // simple_ble_adv_only_name();
+        scanning_start();
+        // See https://github.com/lab11/nrf52x-base/blob/master/lib/simple_ble/README.md
+
+        // Your code goes here.
+    =}
+
+    reaction(t) -> up, down, left, right {=
+        // Output a boolean for each arrow key, where true
+        // indicates that the key is currently pressed and false
+        // indicates that it is not.
+        // up =0
+        // down = 1
+        //lfet =2
+        // right - 3
+        bool u = false;
+        bool d = false;
+        bool l = false;
+        bool r = false;
+        if(char_buffer[0]) {
+            u = true;
+        }
+        if(char_buffer[1]) {
+            d = true;
+        }
+        if(char_buffer[2]) {
+            l = true;
+        }
+        if(char_buffer[3]) {
+            r = true;
+        }
+        lf_set(up,u);
+        lf_set(down,d);
+        lf_set(left,l);
+        lf_set(right,r);
+        
+        // Your code goes here.
+    =}
+}
+
+/**
+ * Create an ArrowKeys reactor that listens for Bluetooth signals
+ * reporting when the user presses arrow keys on a computer that is
+ * paired with the nRF52 running this program and displays which
+ * arrow keys are pressed.
+ */
+main reactor {
+
+    display = new Display();
+    keys    = new ArrowKeys();
+
+
+
+    reaction(keys.up, keys.down, keys.left, keys.right) -> display.message {=
+        static char message[5] = "____\0";
+        if (keys.up->value) {
+            message[0] = 'U';
+        } else {
+            message[0] = '_';
+        }
+        if (keys.down->value) {
+            message[1] = 'D';
+        } else {
+            message[1] = '_';
+        }
+        if (keys.left->value) {
+            message[2] = 'L';
+        } else {
+            message[2] = '_';
+        }
+        if (keys.right->value) {
+            message[3] = 'R';
+        } else {
+            message[3] = '_';
+        }
+        lf_set(display.message, message);
+    =}
+}
